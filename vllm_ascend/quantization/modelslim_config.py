@@ -317,6 +317,8 @@ def get_quant_type_for_layer(
         return quant_description["fa_quant_type"]
     if layer_type == "attention" and "indexer_quant_type" in quant_description:
         return quant_description["indexer_quant_type"]
+    if layer_type == "attention" and "turboquant_quant_type" in quant_description:
+        return quant_description["turboquant_quant_type"]
     # Linear / MoE
     return get_linear_quant_type(quant_description, prefix, packed_modules_mapping)
 
