@@ -1355,3 +1355,80 @@ class AscendC8AttentionBackendImpl(AscendAttentionBackendImpl):
         attn_output = attn_output.view(num_tokens, self.num_heads, self.head_size)
         output[:num_tokens] = attn_output
         return output
+
+
+class AscendTurboQuantAttentionBackendImpl(AscendAttentionBackendImpl):
+    """TurboQuant backend scaffold.
+
+    The first integration milestone only binds TurboQuant-quantized layers to a
+    dedicated backend class while reusing the existing Ascend attention forward
+    path for execution correctness.
+
+    Follow-up patches will add TurboQuant-specific decode/prefill kernels.
+    """
+
+    def forward(
+        self,
+        layer: AttentionLayer,
+        query: torch.Tensor,
+        key: torch.Tensor,
+        value: torch.Tensor,
+        kv_cache: tuple[torch.Tensor],
+        attn_metadata: AscendMetadata,
+        output: torch.Tensor | None = None,
+        output_scale: torch.Tensor | None = None,
+        output_block_scale: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        # Dedicated decode hook for TurboQuant. This keeps behavior equivalent
+        # to the base backend for now while giving us an explicit integration
+        # point for TurboQuant-specific kernels in follow-up patches.
+        if attn_metadata is not None and attn_metadata.attn_state == AscendAttentionState.DecodeOnly:
+            return self._forward_turboquant_decode(layer, query, key, value, kv_cache, attn_metadata, output)
+
+        return super().forward(
+            layer=layer,
+            query=query,
+            key=key,
+            value=value,
+            kv_cache=kv_cache,
+            attn_metadata=attn_metadata,
+            output=output,
+            output_scale=output_scale,
+            output_block_scale=output_block_scale,
+        )
+
+    def _forward_turboquant_decode(
+        self,
+        layer: AttentionLayer,
+        query: torch.Tensor,
+        key: torch.Tensor,
+        value: torch.Tensor,
+        kv_cache: tuple[torch.Tensor],
+        attn_metadata: AscendMetadata,
+        output: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        if output is None:
+            raise ValueError("TurboQuant decode requires a preallocated output tensor.")
+
+        if len(kv_cache) < 2:
+            raise ValueError("TurboQuant decode expects at least key/value cache tensors.")
+
+        # Current milestone: preserve execution semantics by delegating to the
+        # default decode path after validating TurboQuant metadata existence.
+        if not hasattr(layer, "turboquant_k_scale") or not hasattr(layer, "turboquant_k_offset"):
+            raise ValueError(
+                "TurboQuant layer metadata is missing. "
+                "Expected turboquant_k_scale/turboquant_k_offset on attention layer."
+            )
+
+        return super().forward(
+            layer=layer,
+            query=query,
+            key=key,
+            value=value,
+            kv_cache=kv_cache,
+            attn_metadata=attn_metadata,
+            output=output,
+            output_scale=None,
+            output_block_scale=None,
+        )
